@@ -43,3 +43,8 @@ This file serves as a persistent memory for the project. Important decisions, co
     - Create `src/mcp_loader.py`
     - Implement dynamic MCP loading
 
+### Phase 6: Extended Capabilities
+- [x] **Step 10: Multi-Provider Support**
+    - Add Gemini API support
+    - Configurable `LLM_PROVIDER` in `.env`
+

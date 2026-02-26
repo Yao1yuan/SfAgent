@@ -1,11 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr
+from typing import Optional
 
 class Settings(BaseSettings):
-    azure_openai_api_key: SecretStr = Field(..., validation_alias="AZURE_OPENAI_API_KEY")
-    azure_openai_endpoint: str = Field(..., validation_alias="AZURE_OPENAI_ENDPOINT")
-    azure_openai_deployment_name: str = Field(..., validation_alias="AZURE_OPENAI_DEPLOYMENT_NAME")
-    azure_openai_api_version: str = Field(..., validation_alias="AZURE_OPENAI_API_VERSION")
+    azure_openai_api_key: Optional[SecretStr] = Field(None, validation_alias="AZURE_OPENAI_API_KEY")
+    azure_openai_endpoint: Optional[str] = Field(None, validation_alias="AZURE_OPENAI_ENDPOINT")
+    azure_openai_deployment_name: Optional[str] = Field(None, validation_alias="AZURE_OPENAI_DEPLOYMENT_NAME")
+    azure_openai_api_version: Optional[str] = Field(None, validation_alias="AZURE_OPENAI_API_VERSION")
+
+    google_api_key: Optional[SecretStr] = Field(None, validation_alias="GOOGLE_API_KEY")
+    llm_provider: str = Field("azure", validation_alias="LLM_PROVIDER")
 
     model_config = SettingsConfigDict(
         env_file=".env",

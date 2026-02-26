@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "langgraph",
     "langchain-openai",
+    "langchain-google-genai",
     "typer",
     "rich",
     "pydantic-settings",
