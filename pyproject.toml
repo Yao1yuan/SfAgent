@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schaeffler-cli"
+version = "0.1.0"
+description = "Secure Enterprise AI Developer CLI for Schaeffler"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph",
+    "langchain-openai",
+    "typer",
+    "rich",
+    "pydantic-settings",
+    "python-dotenv",
+    "tree-sitter",
+    "tree-sitter-python",
+    "langchain-community"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+    "black",
+    "isort",
+    "mypy"
+]
+
+[project.scripts]
+schaeffler-cli = "src.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

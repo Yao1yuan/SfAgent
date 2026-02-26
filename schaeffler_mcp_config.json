@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "uvx",
+      "args": ["mcp-jira", "--url", "https://schaeffler.atlassian.net"]
+    },
+    "gitlab": {
+      "command": "uvx",
+      "args": ["mcp-gitlab", "--token", "env:GITLAB_TOKEN"]
+    }
+  }
+}
