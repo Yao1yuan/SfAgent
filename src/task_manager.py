@@ -19,7 +19,7 @@ class TaskList(BaseModel):
     tasks: List[Task] = []
 
 # Storage
-TASK_FILE = Path(".schaeffler/tasks.json")
+TASK_FILE = Path(".sf/tasks.json")
 
 def load_tasks() -> TaskList:
     if not TASK_FILE.exists():

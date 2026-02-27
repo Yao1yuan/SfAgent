@@ -43,7 +43,7 @@ class MCPManager:
         cls._exit_stack = AsyncExitStack()
         cls._tools = []
 
-        config_path = base.PROJECT_ROOT / "schaeffler_mcp_config.json"
+        config_path = base.PROJECT_ROOT / "sf_mcp_config.json"
         if not config_path.exists():
             return []
 

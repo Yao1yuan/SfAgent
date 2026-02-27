@@ -30,7 +30,7 @@ COMMANDS = {
     "/skills": "List all available domain skills",
     "/load": "Load a specific skill into context",
     "/clear": "Clear the conversation history (Not implemented)",
-    "/exit": "Quit the Schaeffler CLI"
+    "/exit": "Quit the SF CLI"
 }
 
 class SlashCommandCompleter(Completer):
@@ -75,7 +75,7 @@ console = Console()
 @app.callback()
 def main():
     """
-    Schaeffler CLI - Secure AI Developer Agent
+    SF CLI - Secure AI Developer Agent
     """
     pass
 
@@ -87,7 +87,7 @@ def chat():
     asyncio.run(run_chat_loop())
 
 async def run_chat_loop():
-    console.print(Panel.fit("[bold blue]Schaeffler AI Developer CLI[/bold blue]\n[dim]Secure. Compliant. Autonomous.[/dim]", border_style="blue"))
+    console.print(Panel.fit("[bold blue]SF AI Developer CLI[/bold blue]\n[dim]Secure. Compliant. Autonomous.[/dim]", border_style="blue"))
     console.print("[dim]Hint: Type `/help` to see available local commands.[/dim]")
 
     # Initialize MCP
@@ -133,7 +133,7 @@ async def run_chat_loop():
   /exit                Quit the CLI
   /clear               (Not implemented) Clear history
 """
-                console.print(Panel(help_text, title="Schaeffler CLI Help", border_style="green"))
+                console.print(Panel(help_text, title="SF CLI Help", border_style="green"))
                 continue
 
             if cmd == "/skills":

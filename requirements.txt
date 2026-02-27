@@ -1,5 +1,5 @@
 # ----------------------------------------------------
-# Schaeffler Code CLI - requirements.txt
+# SF Code CLI - requirements.txt
 #
 # This file lists only the TOP-LEVEL direct dependencies.
 # Pip will automatically handle installing their sub-dependencies.

@@ -1,10 +1,10 @@
 
-# Schaeffler Code CLI 
+# SF Code CLI 
 
 
 **Secure. Compliant. Autonomous.**
 
-**Schaeffler Code CLI** is an enterprise-grade, interactive AI developer agent designed to run securely within the Schaeffler corporate environment. It acts as an internal, compliant alternative to tools like Claude Code CLI or GitHub Copilot Workspace, providing developers with a powerful, context-aware coding assistant that understands your entire codebase.
+**SF Code CLI** is an enterprise-grade, interactive AI developer agent designed to run securely within the SF corporate environment. It acts as an internal, compliant alternative to tools like Claude Code CLI or GitHub Copilot Workspace, providing developers with a powerful, context-aware coding assistant that understands your entire codebase.
 
 This tool is built from the ground up with a focus on **security**, **data privacy**, and **developer productivity**.
 
@@ -15,7 +15,7 @@ This tool is built from the ground up with a focus on **security**, **data priva
 *   **🤖 Advanced Agentic Workflow**: Powered by LangGraph, the agent can plan, execute multi-step tasks, and self-correct based on tool outputs.
 *   **🛡️ Enterprise-Grade Security**:
     *   **Human-in-the-Loop (HITL)**: No file modifications or shell commands are executed without explicit `[y/n/always]` user approval.
-    *   **Zero Telemetry**: No usage data, code, or metadata is ever sent to third-party servers. All interactions are strictly between your local machine and Schaeffler's private Azure OpenAI instance.
+    *   **Zero Telemetry**: No usage data, code, or metadata is ever sent to third-party servers. All interactions are strictly between your local machine and SF's private Azure OpenAI instance.
 *   **🧠 Intelligent Code Understanding**:
     *   **AST Analysis**: Uses `tree-sitter` to parse code into abstract syntax trees, enabling deep semantic understanding beyond simple text matching.
     *   **Sub-Agent Delegation**: Spawns ephemeral, read-only sub-agents for research tasks (`/delegate_research`), keeping the main context window clean and focused.
@@ -24,7 +24,7 @@ This tool is built from the ground up with a focus on **security**, **data priva
     *   **Persistent Task Management**: Manages complex project plans in a local `.json` file, allowing work to be resumed across sessions.
 *   **🔌 Extensible & Customizable**:
     *   **Slash Commands**: Intuitive commands like `/skills`, `/load`, and `/auto` for a fast, mouse-free workflow.
-    *   **Skill Injection**: Dynamically load Schaeffler-specific domain knowledge (e.g., coding standards, testing procedures) from a local `.schaeffler/skills/` directory.
+    *   **Skill Injection**: Dynamically load SF-specific domain knowledge (e.g., coding standards, testing procedures) from a local `.schaeffler/skills/` directory.
     *   **MCP Integration**: Ready to connect with internal Model Context Protocol (MCP) servers for seamless access to tools like Jira, GitLab, and internal databases.
 *   **🚀 Modern CLI Experience**:
     *   **Auto-Completion**: Interactive `prompt_toolkit` interface with real-time command suggestions and descriptions.
@@ -38,7 +38,7 @@ This tool is built from the ground up with a focus on **security**, **data priva
 ### Prerequisites
 
 *   Python 3.10+
-*   Access to Schaeffler's internal Azure OpenAI endpoint.
+*   Access to SF's internal Azure OpenAI endpoint.
 *   Required environment variables (see below).
 
 ### Installation
@@ -46,7 +46,7 @@ This tool is built from the ground up with a focus on **security**, **data priva
 1.  **Clone the repository:**
     ```bash
     git clone <your-repo-url>
-    cd Schaeffler-Code-CLI
+    cd SF-Code-CLI
     ```
 
 2.  **Set up a virtual environment:**
@@ -61,7 +61,7 @@ This tool is built from the ground up with a focus on **security**, **data priva
     ```
 
 4.  **Configure Environment Variables:**
-    Create a `.env` file in the project root by copying `.env.template`. Fill in your credentials for Schaeffler's Azure OpenAI service:
+    Create a `.env` file in the project root by copying `.env.template`. Fill in your credentials for SF's Azure OpenAI service:
     ```ini
     # .env
     AZURE_OPENAI_API_KEY="your_secret_key"
@@ -123,5 +123,5 @@ The agent is built on a robust, stateful architecture using **LangGraph**. The c
 
 ## 🤝 Contributing
 
-This is an internal Schaeffler project. Please refer to the internal contribution guidelines or contact the project maintainers for details on how to contribute.
+This is an internal SF project. Please refer to the internal contribution guidelines or contact the project maintainers for details on how to contribute.
 ```

@@ -2,7 +2,7 @@ from typing import List
 from pathlib import Path
 from langchain_core.tools import tool
 
-SKILLS_DIR = Path(".schaeffler/skills")
+SKILLS_DIR = Path(".sf/skills")
 
 def _get_skills_dir() -> Path:
     """Ensure directory exists and return path."""
@@ -29,7 +29,7 @@ def read_skill_content(skill_name: str) -> str:
 @tool
 def list_available_skills() -> str:
     """
-    List all available skills (directories in .schaeffler/skills/).
+    List all available skills (directories in .sf/skills/).
     Each directory represents a skill, and may contain multiple .md files.
     Returns: A newline-separated string of skill names.
     """

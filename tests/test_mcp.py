@@ -6,7 +6,7 @@ import src.tools.base as base
 def test_load_mcp_config(tmp_path, monkeypatch):
     """Test loading MCP configuration"""
     # Create fake config
-    config_file = tmp_path / "schaeffler_mcp_config.json"
+    config_file = tmp_path / "sf_mcp_config.json"
     config = {
         "mcpServers": {
             "test_server": {

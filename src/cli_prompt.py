@@ -7,7 +7,7 @@ COMMANDS = {
     "/skills": "List all available domain skills",
     "/load": "Load a specific skill into context",
     "/clear": "Clear the conversation history (Not implemented)",
-    "/exit": "Quit the Schaeffler CLI"
+    "/exit": "Quit the SF CLI"
 }
 
 class SlashCommandCompleter(Completer):

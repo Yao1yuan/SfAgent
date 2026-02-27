@@ -1,8 +1,8 @@
 
-# 📋 Schaeffler Code CLI - Enterprise Architecture Guide
+# 📋 SF Code CLI - Enterprise Architecture Guide
 
 ## 🏢 1. Project Context & Security Mandate
-**Objective**: Build a secure, autonomous, enterprise-grade AI Developer CLI for **Schaeffler**. This tool mimics the capabilities of "Claude Code" but runs entirely within Schaeffler's secure infrastructure using Azure OpenAI.
+**Objective**: Build a secure, autonomous, enterprise-grade AI Developer CLI for **SF**. This tool mimics the capabilities of "Claude Code" but runs entirely within SF's secure infrastructure using Azure OpenAI.
 
 **🚨 Critical Compliance Rules (Zero Tolerance):**
 1.  **Zero Telemetry**: ABSOLUTELY NO analytics, tracking, or external data logging code allowed.
