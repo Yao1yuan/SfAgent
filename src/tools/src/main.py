@@ -8,13 +8,11 @@ from typing import Optional, Dict, Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
-from rich.prompt import Confirm
+from rich.prompt import Prompt, Confirm
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-
-# --- 引入 prompt_toolkit 核心组件 ---
 from prompt_toolkit import PromptSession
+from prompt_toolkit.styles import Style
 from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.completion import Completer, Completion
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,52 +21,8 @@ from src.graph import app_graph
 from src.llm import get_llm
 from src.mcp_loader import MCPManager
 from src.tools.skills import get_all_skills, read_skill_content
+from src.cli_prompt import SlashCommandCompleter
 
-# --- 自动补全器配置 (Completer) ---
-COMMANDS = {
-    "/help": "Show available commands",
-    "/skills": "List all available domain skills",
-    "/load": "Load a specific skill into context",
-    "/clear": "Clear the conversation history (Not implemented)",
-    "/exit": "Quit the Schaeffler CLI"
-}
-
-class SlashCommandCompleter(Completer):
-    def get_completions(self, document, complete_event):
-        text = document.text_before_cursor
-
-        # Handle command completion (starts with /)
-        if text.startswith('/'):
-            # If typing a skill name after /load
-            if text.startswith('/load '):
-                prefix = text[6:] # Extract what comes after "/load "
-                available_skills = get_all_skills()
-
-                found = False
-                for skill in available_skills:
-                    if skill.startswith(prefix):
-                        found = True
-                        yield Completion(
-                            skill,
-                            start_position=-len(prefix),
-                            display_meta="Skill Module"
-                        )
-                # If no skills match, show all
-                if not found and not prefix:
-                    for skill in available_skills:
-                         yield Completion(skill, start_position=0, display_meta="Skill Module")
-                return
-
-            # Normal command completion
-            for cmd, desc in COMMANDS.items():
-                if cmd.startswith(text):
-                    yield Completion(
-                        cmd,
-                        start_position=-len(text),
-                        display_meta=desc
-                    )
-
-# --- CLI 主程序 ---
 app = typer.Typer(no_args_is_help=True)
 console = Console()
 
@@ -103,19 +57,30 @@ async def run_chat_loop():
 
     console.print(f"[dim]Session ID: {thread_id}[/dim]")
 
-    # 👇 [核心修改] 初始化带有自动补全功能的会话 (Session)
+    # Initialize PromptSession with custom completer
+    style = Style.from_dict({
+        'prompt': 'ansicyan bold',
+    })
     session = PromptSession(
         completer=SlashCommandCompleter(),
+        style=style,
         complete_while_typing=True
     )
 
     try:
         while True:
-            # 👇 [核心修改] 使用 prompt_toolkit 异步获取输入，支持补全和高亮
+            # Note: Prompt.ask is synchronous (blocking IO), which blocks the event loop.
+            # In a production async app, we'd use an async input library or run in executor.
+            # But for this simple CLI, blocking here is fine as nothing else is running in background.
+            # user_input = Prompt.ask("\n[bold green]You[/bold green]")
             try:
-                user_input = await session.prompt_async(HTML('\n<ansigreen><b>You:</b></ansigreen> '))
+                 # Use prompt_toolkit session
+                 print() # Add a newline for spacing
+                 # Use synchronous prompt to ensure reliable rendering in all terminals
+                 # prompt_async sometimes conflicts with complex event loops on Windows
+                 user_input = await session.prompt_async(HTML('<prompt>Schaeffler-CLI ></prompt> '))
             except (KeyboardInterrupt, EOFError):
-                console.print("\n[yellow]Session terminated by user.[/yellow]")
+                console.print("[yellow]Goodbye![/yellow]")
                 break
 
             if user_input.lower() in ["exit", "quit", "/exit"]:
@@ -172,8 +137,12 @@ async def run_chat_loop():
 
             await _run_interaction(inputs, config)
 
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Session interrupted.[/yellow]")
     except Exception as e:
-        console.print(f"\n[bold red]Fatal Error:[/bold red] {e}")
+        console.print(f"\n[bold red]Error:[/bold red] {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         await MCPManager.cleanup()
 
@@ -182,6 +151,10 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
     Run the graph loop, handling interrupts.
     """
     try:
+        # Determine if we are starting new or resuming
+        # If inputs is None, we are resuming from interrupt (passing None to proceed)
+
+        # Use astream for async streaming
         async for event in app_graph.astream(inputs, config=config, stream_mode="updates"):
             for node, values in event.items():
                 if "messages" in values:
@@ -190,7 +163,7 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
 
                     if sender == "coder":
                         if isinstance(last_msg, AIMessage):
-                            # Cleanly print thought process (fixes the raw dict issue)
+                            # Print thought process
                             if last_msg.content:
                                 content_to_print = last_msg.content
                                 if isinstance(content_to_print, list):
@@ -208,17 +181,23 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
                                 console.print(f"[bold cyan][Coder][/bold cyan] Proposed tools: {[tc['name'] for tc in last_msg.tool_calls]}")
 
                     elif sender == "reviewer":
+                        # If reviewer sends a message, it's a rejection
                         if isinstance(last_msg, HumanMessage):
                             console.print(f"[bold red][Reviewer][/bold red] {last_msg.content}")
 
                     elif sender == "tools":
+                         # Tool execution result
                          if isinstance(last_msg, ToolMessage):
                              content_preview = str(last_msg.content)
                              if len(content_preview) > 200:
                                  content_preview = content_preview[:200] + "..."
                              console.print(f"[bold magenta][Tool][/bold magenta] Result: {content_preview}")
 
+
         # Check if paused (HITL)
+        # get_state is sync or async? MemorySaver is sync in-memory usually, but checkpointer interface supports async.
+        # But app_graph.get_state(config) is a method on CompiledGraph.
+        # If CompiledGraph is async, get_state is sync (it just reads checkpointer).
         snapshot = app_graph.get_state(config)
 
         if snapshot.next and "tools" in snapshot.next:
@@ -231,12 +210,15 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
                 for tc in tool_calls:
                     console.print(f"  [bold]{tc['name']}[/bold]: {tc['args']}")
 
-                # Ask for approval (Synchronous blocking, keeps UI clean)
+                # Ask for approval (Synchronous blocking)
                 if Confirm.ask("Approve execution?"):
                     console.print("[green]Approving... Resuming execution.[/green]")
+                    # Resume by passing None, which tells LangGraph to proceed
                     await _run_interaction(None, config)
                 else:
                     console.print("[red]Rejected.[/red]")
+
+                    # Construct rejection messages for ALL pending tool calls
                     rejection_messages = []
                     for tc in tool_calls:
                         rejection_messages.append(ToolMessage(
@@ -244,11 +226,17 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
                             content="Error: User rejected execution.",
                             name=tc['name']
                         ))
+
+                    # Update state to inject these tool results as if tools ran and failed
                     app_graph.update_state(config, {"messages": rejection_messages}, as_node="tools")
+
+                    # Resume execution (will go back to Coder with the error)
                     await _run_interaction(None, config)
 
     except Exception as e:
         console.print(f"[bold red]Interaction Error:[/bold red] {e}")
+        import traceback
+        traceback.print_exc()
 
 @app.command()
 def ping():
