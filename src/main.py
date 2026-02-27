@@ -192,16 +192,34 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
                         if isinstance(last_msg, AIMessage):
                             # Cleanly print thought process (fixes the raw dict issue)
                             if last_msg.content:
-                                content_to_print = last_msg.content
-                                if isinstance(content_to_print, list):
-                                    text_parts = []
-                                    for part in content_to_print:
+                                content_obj = last_msg.content
+                                text_parts = []
+                                if isinstance(content_obj, list):
+                                    for part in content_obj:
                                         if isinstance(part, dict) and part.get('type') == 'text':
                                             text_parts.append(part.get('text', ''))
-                                    content_to_print = "".join(text_parts)
+                                elif isinstance(content_obj, str):
+                                     text_parts.append(content_obj)
 
-                                if content_to_print:
-                                    console.print(f"[bold blue][Coder][/bold blue] {content_to_print}")
+                                full_thoughts = "".join(text_parts)
+
+                                if full_thoughts:
+                                    if len(full_thoughts) <= 150:
+                                        console.print(f"[bold blue][Coder][/bold blue] {full_thoughts}")
+                                    else:
+                                        preview = full_thoughts[:100].replace('\n', ' ') + "..."
+                                        console.print(f"[bold blue][Coder][/bold blue] [dim]{preview}[/dim]")
+
+                                        user_choice = Prompt.ask(
+                                            "[dim]Press 't' to read full thoughts, or ENTER to continue[/dim]",
+                                            choices=["t"],
+                                            default="",
+                                            show_choices=False,
+                                            show_default=False
+                                        )
+                                        if user_choice.lower() == 't':
+                                            with console.pager():
+                                                console.print(Markdown(full_thoughts))
 
                             # Print tool calls if present
                             if last_msg.tool_calls:
