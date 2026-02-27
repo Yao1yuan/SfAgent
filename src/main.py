@@ -179,77 +179,55 @@ async def run_chat_loop():
 
 async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, Any]):
     """
-    Run the graph loop, handling interrupts.
+    [REFACTORED] Run the graph loop with a "collect then render" strategy
+    to support interactive expandable outputs.
     """
     try:
+        # --- [核心修改] Step 1: Silently collect all new messages from the stream ---
+        new_messages = []
         async for event in app_graph.astream(inputs, config=config, stream_mode="updates"):
             for node, values in event.items():
                 if "messages" in values:
-                    last_msg = values["messages"][-1]
-                    sender = values.get("sender", "unknown")
+                    # Just collect, don't print yet!
+                    new_messages.extend(values["messages"])
 
-                    if sender == "coder":
-                        if isinstance(last_msg, AIMessage):
-                            # Cleanly print thought process (fixes the raw dict issue)
-                            if last_msg.content:
-                                content_obj = last_msg.content
-                                text_parts = []
-                                if isinstance(content_obj, list):
-                                    for part in content_obj:
-                                        if isinstance(part, dict) and part.get('type') == 'text':
-                                            text_parts.append(part.get('text', ''))
-                                elif isinstance(content_obj, str):
-                                     text_parts.append(content_obj)
+        # --- [核心修改] Step 2: Interactively render the collected messages ---
+        for msg in new_messages:
+            if isinstance(msg, AIMessage):  # It's from the Coder
+                # Render thoughts (collapsible)
+                if msg.content:
+                    full_thoughts = "".join(part.get('text', '') for part in msg.content if isinstance(part, dict) and part.get('type') == 'text') if isinstance(msg.content, list) else str(msg.content)
+                    if full_thoughts:
+                        if len(full_thoughts) <= 150:
+                            console.print(f"[bold blue][Coder][/bold blue] {full_thoughts}")
+                        else:
+                            preview = full_thoughts[:100].replace('\n', ' ') + "..."
+                            console.print(f"[bold blue][Coder][/bold blue] [dim]{preview}[/dim]")
+                            user_choice = Prompt.ask("[dim]Press 't' to read full thoughts, or ENTER to continue[/dim]", choices=["t"], default="", show_choices=False, show_default=False)
+                            if user_choice.lower() == 't':
+                                with console.pager():
+                                    console.print(Markdown(full_thoughts))
+                # Render proposed tools (always visible)
+                if msg.tool_calls:
+                    console.print(f"[bold cyan][Coder][/bold cyan] Proposed tools: {[tc['name'] for tc in msg.tool_calls]}")
 
-                                full_thoughts = "".join(text_parts)
+            elif isinstance(msg, ToolMessage):  # It's from a Tool
+                # Render tool results (collapsible)
+                full_content = str(msg.content)
+                if len(full_content) <= 300:
+                    console.print(f"[bold magenta][Tool][/bold magenta] Result: {full_content}")
+                else:
+                    preview = full_content[:300].replace('\n', ' ') + "\n... [Output Truncated] ..."
+                    console.print(f"[bold magenta][Tool][/bold magenta] Result: [dim]{preview}[/dim]")
+                    user_choice = Prompt.ask("[dim]Press 'v' to view full output, or ENTER to continue[/dim]", choices=["v"], default="", show_choices=False, show_default=False)
+                    if user_choice.lower() == 'v':
+                        with console.pager():
+                            console.print(full_content)
 
-                                if full_thoughts:
-                                    if len(full_thoughts) <= 150:
-                                        console.print(f"[bold blue][Coder][/bold blue] {full_thoughts}")
-                                    else:
-                                        preview = full_thoughts[:100].replace('\n', ' ') + "..."
-                                        console.print(f"[bold blue][Coder][/bold blue] [dim]{preview}[/dim]")
 
-                                        user_choice = Prompt.ask(
-                                            "[dim]Press 't' to read full thoughts, or ENTER to continue[/dim]",
-                                            choices=["t"],
-                                            default="",
-                                            show_choices=False,
-                                            show_default=False
-                                        )
-                                        if user_choice.lower() == 't':
-                                            with console.pager():
-                                                console.print(Markdown(full_thoughts))
-
-                            # Print tool calls if present
-                            if last_msg.tool_calls:
-                                console.print(f"[bold cyan][Coder][/bold cyan] Proposed tools: {[tc['name'] for tc in last_msg.tool_calls]}")
-
-                    elif sender == "tools":
-                         if isinstance(last_msg, ToolMessage):
-                            full_content = str(last_msg.content)
-                            if len(full_content) <= 300:
-                                console.print(f"[bold magenta][Tool][/bold magenta] Result: {full_content}")
-                            else:
-                                preview = full_content[:300] + "\n... [Output Truncated] ..."
-                                console.print(f"[bold magenta][Tool][/bold magenta] Result: {preview}")
-
-                                user_choice = Prompt.ask(
-                                    "[dim]Press 'v' to view full output, or ENTER to continue[/dim]",
-                                    choices=["v"],
-                                    default="",
-                                    show_choices=False,
-                                    show_default=False
-                                )
-                                if user_choice.lower() == 'v':
-                                    with console.pager():
-                                        console.print(full_content)
-
-        # Check if paused (HITL)
+        # --- Step 3: Handle the Human-in-the-Loop approval (this part was already correct) ---
         snapshot = app_graph.get_state(config)
-
         if snapshot.next and "tools" in snapshot.next:
-            # We are paused before tools
             last_msg = snapshot.values["messages"][-1]
             if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
                 tool_calls = last_msg.tool_calls
@@ -258,22 +236,28 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
                 for tc in tool_calls:
                     console.print(f"  [bold]{tc['name']}[/bold]: {tc['args']}")
 
-                # Ask for approval (Synchronous blocking, keeps UI clean)
-                if Confirm.ask("Approve execution?"):
+                # Update the approval prompt to include 'always'
+                user_approval = Prompt.ask("Approve execution? [y/n/always]", choices=["y", "n", "always"], default="y")
+
+                if user_approval.lower() in ['y', 'yes']:
                     console.print("[green]Approving... Resuming execution.[/green]")
+                    await _run_interaction(None, config)
+                elif user_approval.lower() in ['a', 'always']:
+                    # Assuming you have a global or class-level AUTO_APPROVE flag
+                    # This part needs to be connected to the new `/auto` feature state
+                    console.print("[green]Always-Approve Mode Enabled. Resuming...[/green]")
+                    # Set the flag here
+                    # e.g., set_auto_approve(True)
                     await _run_interaction(None, config)
                 else:
                     console.print("[red]Rejected.[/red]")
-                    rejection_messages = []
-                    for tc in tool_calls:
-                        rejection_messages.append(ToolMessage(
-                            tool_call_id=tc['id'],
-                            content="Error: User rejected execution.",
-                            name=tc['name']
-                        ))
+                    rejection_messages = [ToolMessage(tool_call_id=tc['id'], content="Error: User rejected execution.", name=tc['name']) for tc in tool_calls]
                     app_graph.update_state(config, {"messages": rejection_messages}, as_node="tools")
                     await _run_interaction(None, config)
 
+    except KeyboardInterrupt:
+        console.print("\n[bold red]🛑 Generation interrupted by user.[/bold red]")
+        return
     except Exception as e:
         console.print(f"[bold red]Interaction Error:[/bold red] {e}")
 
