@@ -1,12 +1,18 @@
 {
   "mcpServers": {
-    "jira": {
-      "command": "uvx",
-      "args": ["mcp-jira", "--url", "https://schaeffler.atlassian.net"]
+    "visionpro": {
+      "command": "C:\\Users\\yaoyxi\\Desktop\\Code\\ConsoleApp1\\.claude\\skills\\visionpro-expert\\scripts\\Debug\\VppDriver.exe",
+      "args": [],
+      "env": {}
     },
-    "gitlab": {
-      "command": "uvx",
-      "args": ["mcp-gitlab", "--token", "env:GITLAB_TOKEN"]
+    "visionpro_walkthrough": {
+      "command": "C:\\Users\\yaoyxi\\AppData\\Local\\mambaforge\\envs\\aivi\\python.exe",
+      "args": [
+        "C:\\Users\\yaoyxi\\Desktop\\Code\\vpro_doc\\mcp_vpro_walkthrough.py"
+      ],
+      "env": {
+        "VPRO_KB_DB": "C:\\VPro\\visionpro_all.db"
+      }
     }
   }
 }

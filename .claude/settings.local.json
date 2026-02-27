@@ -9,7 +9,9 @@
       "Bash(git commit:*)",
       "Bash(git branch:*)",
       "Bash(git remote:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(\"C:/Users/yaoyxi/AppData/Local/mambaforge/envs/aivi/python.exe\":*)",
+      "Bash(/c/Users/yaoyxi/AppData/Local/mambaforge/envs/aivi/python:*)"
     ]
   }
 }

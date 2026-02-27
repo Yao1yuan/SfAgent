@@ -1,0 +1,39 @@
+{
+  "tasks": [
+    {
+      "id": "f9b9f6ec",
+      "title": "Setup Project",
+      "status": "done",
+      "dependencies": [],
+      "notes": null
+    },
+    {
+      "id": "fd226b04",
+      "title": "Implement Feature A",
+      "status": "pending",
+      "dependencies": [
+        "f9b9f6ec"
+      ],
+      "notes": null
+    },
+    {
+      "id": "d6de7ead",
+      "title": "Implement Feature B",
+      "status": "pending",
+      "dependencies": [
+        "f9b9f6ec"
+      ],
+      "notes": null
+    },
+    {
+      "id": "01458503",
+      "title": "Deploy",
+      "status": "blocked",
+      "dependencies": [
+        "fd226b04",
+        "d6de7ead"
+      ],
+      "notes": null
+    }
+  ]
+}

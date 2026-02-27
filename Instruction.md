@@ -1,5 +1,4 @@
 
-
 # 📋 Schaeffler Code CLI - Enterprise Architecture Guide
 
 ## 🏢 1. Project Context & Security Mandate
@@ -51,27 +50,39 @@
 -   Implement a `apply_diff_patch(filepath, search_block, replace_block)` tool.
 -   The LLM must locate the `search_block` in the file and replace it with `replace_block`. Raise an error if the block is not found (prevents hallucinations).
 
-### Phase 3: The "Brain" (LangGraph Architecture)
+### Phase 3: The "Brain" & Advanced Delegation (Updated)
 
-#### Step 5: Multi-Agent Workflow (The "ReAct" Loop)
+#### Step 5: The "Task Delegation" Tool (Inspired by s04)
+**Objective**: Solve the "Context Window" problem by spawning ephemeral sub-agents.
+-   **Define Tool**: Create a new tool `delegate_subtask(task_description: str) -> str`.
+-   **Implementation**:
+    -   Inside this tool, initialize a **fresh** AzureChatOpenAI instance and a **fresh** list of messages (System Prompt + User Task).
+    -   Give this sub-agent access to **read-only tools** (`read_file`, `list_directory`, `run_shell_command`).
+    -   **Crucial**: Do NOT give it `write_file` or `delegate_subtask` (prevent infinite recursion).
+    -   **Loop**: Run the sub-agent loop for up to 10 turns or until it answers.
+    -   **Return**: The final answer from the sub-agent is returned as the tool output to the Parent Agent.
+    -   **Discard**: The entire conversation history of the sub-agent is thrown away. Only the summary remains.
+
+#### Step 6: Multi-Agent Workflow (The "ReAct" Loop)
 -   Create `src/graph.py`. Define a `StateGraph`.
 -   **Agent 1: Coder**: The worker who proposes changes.
 -   **Agent 2: Compliance Reviewer**: A separate LLM call (system prompt: "Check for hardcoded secrets, PII, and destructive commands").
+-   **Enhancement**: The Coder Agent can now use the `delegate_subtask` tool to "go look up how to use this library" without polluting its own main context.
 -   **Workflow**:
     1.  User Input -> **Coder**.
-    2.  Coder proposes a Tool Call (e.g., `apply_diff_patch`).
+    2.  Coder proposes a Tool Call (e.g., `delegate_subtask` or `apply_diff_patch`).
     3.  **Router**: Route to **Reviewer** before executing.
     4.  Reviewer analyzes the diff.
         -   If *Reject*: Send feedback back to **Coder** to fix.
         -   If *Approve*: Proceed to **Human Approval**.
 
-#### Step 6: Human-in-the-Loop (The "Kill Switch")
+#### Step 7: Human-in-the-Loop (The "Kill Switch")
 -   In `src/graph.py`, configure `interrupt_before=["tools"]` (or the specific node that executes tools).
 -   This ensures the graph **freezes** execution right after the Reviewer approves but *before* the file is actually touched.
 
 ### Phase 4: Advanced Engineering (Inspired by Industry Standards)
 
-#### Step 7: AST-Based Code Understanding (Tree-sitter)
+#### Step 8: AST-Based Code Understanding (Tree-sitter)
 -   Integrate the `tree-sitter` library.
 -   Create a tool `analyze_code_structure(filepath)`.
 -   Instead of reading raw text, this tool returns a **skeletal outline** (classes, methods, signatures) of the file.
@@ -79,13 +90,13 @@
 
 ### Phase 5: User Experience & Integration
 
-#### Step 8: The Interactive UI (Rich)
+#### Step 9: The Interactive UI (Rich)
 -   Update `src/main.py`.
 -   Build a REPL (Read-Eval-Print Loop) using `Rich` Console.
 -   Stream the LLM's thought process (e.g., `[Coder] Thinking...`, `[Reviewer] Checking security...`) in real-time.
 -   **Crucial**: When the LangGraph interrupts for Human Approval, render a clear, warning-colored Diff of the proposed changes and ask: `⚠️ Approve changes to 'main.py'? [y/N]`.
 
-#### Step 9: MCP Integration (Future-Proofing)
+#### Step 10: MCP Integration (Future-Proofing)
 -   Create `src/mcp_loader.py` using `langchain-mcp-adapters`.
 -   Allow the CLI to read a `schaeffler_mcp_config.json` file to dynamically load internal MCP servers (e.g., Jira, GitLab).
 -   Inject these external tools into the Coder Agent's capability list at runtime.

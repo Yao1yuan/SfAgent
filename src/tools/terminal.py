@@ -28,9 +28,25 @@ def run_shell_command(command: str) -> str:
     command_str = command.strip()
 
     # Basic blocklist check
-    for blocked in BLOCKED_COMMANDS:
-        if blocked in command_str:
-            return f"Error: Command blocked for security reasons: {blocked}"
+    # Instead of substring matching, check tokens
+    command_tokens = shlex.split(command_str)
+
+    for blocked_word in BLOCKED_COMMANDS:
+        # Check if the blocked word appears as a standalone token
+        # This prevents "add" (containing "dd") from being blocked.
+        # However, for phrases like "rm -rf /", splitting doesn't work directly if the blocked item is a phrase.
+        # Let's check both: exact match for single-word commands, and substring match ONLY for phrases with spaces.
+
+        if " " in blocked_word:
+            # Phrase check (substring) - e.g. "rm -rf /"
+            if blocked_word in command_str:
+                 return f"Error: Command blocked for security reasons: {blocked_word}"
+        else:
+            # Single word check (token) - e.g. "dd", "rm"
+            # We want to block 'rm' but not 'farm'.
+            # We check if the blocked word is exactly one of the tokens.
+            if blocked_word in command_tokens:
+                return f"Error: Command blocked for security reasons: {blocked_word}"
 
     # Also check if trying to access sensitive paths like /etc or ~/.ssh
     if "/etc" in command_str or "~/.ssh" in command_str:

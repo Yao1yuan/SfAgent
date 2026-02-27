@@ -13,7 +13,7 @@ def get_llm():
             raise ValueError("GOOGLE_API_KEY is required for Gemini provider")
 
         return ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-2.5-pro",
             google_api_key=settings.google_api_key,
             temperature=0,
             convert_system_message_to_human=True # Gemini sometimes needs this

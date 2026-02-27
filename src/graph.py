@@ -1,9 +1,6 @@
 from typing import TypedDict, Annotated, List, Literal, Union
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate
-# Removed unused pydantic import
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 import operator
 
@@ -12,188 +9,174 @@ from src.tools.filesystem import list_directory, read_file
 from src.tools.terminal import run_shell_command
 from src.tools.editor import apply_diff_patch
 from src.tools.analysis import analyze_code_structure
-from src.mcp_loader import load_mcp_tools
+from src.tools.subagent import delegate_research
+from src.mcp_loader import MCPManager
+from src.compression import compress_history
+from src.task_manager import task_create, task_complete, task_list
+from src.tools.skills import list_available_skills, load_skill
 
-# Define Tools
-# We load core tools + MCP tools
-TOOLS = [list_directory, read_file, run_shell_command, apply_diff_patch, analyze_code_structure]
-MCP_TOOLS = load_mcp_tools()
-TOOLS.extend(MCP_TOOLS)
+# Core Tools
+CORE_TOOLS = [
+    list_directory, read_file, run_shell_command, apply_diff_patch,
+    analyze_code_structure, delegate_research,
+    task_create, task_complete, task_list,
+    list_available_skills, load_skill
+]
 
-# Define State
+def get_all_tools():
+    """Return all tools including dynamically loaded MCP tools"""
+    return CORE_TOOLS + MCPManager.get_tools()
+
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
     sender: str
 
 # --- Nodes ---
 
-def coder_node(state: AgentState):
-    """
-    The Coder agent responsible for generating code and tool calls.
-    """
-    llm = get_llm()
-    # Bind tools to the LLM
-    coder_llm = llm.bind_tools(TOOLS)
+async def coder_node(state: AgentState):
+    """Main Coder Agent"""
+    print("🤖 [Coder] Thinking...")
 
+    # 1. Compress History (Prevent Token Overflow)
+    # We pass the compressed view to the LLM, but we don't destructively modify
+    # the state here (to keep history for the user), unless auto-compact triggers.
+    compressed_messages = compress_history(state["messages"])
+
+    llm = get_llm()
+    current_tools = get_all_tools()
+    coder_llm = llm.bind_tools(current_tools)
+
+    # System Prompt with explicit "Laziness" instruction
     system_message = (
         "You are an expert Senior Python Developer at Schaeffler. "
-        "Your goal is to complete the user's task securely and efficiently.\n"
-        "You have access to filesystem and terminal tools. "
-        "ALWAYS use the provided tools to modify files or run commands. "
-        "Do NOT hallucinate file contents.\n"
-        "Compliance: No telemetry, no hardcoded secrets, no destructive commands."
+        "Your goal is to complete tasks securely and efficiently.\n"
+        "Security Rules:\n"
+        "1. No telemetry. No external API calls (except Azure).\n"
+        "2. No hardcoded secrets.\n"
+        "3. Always use `task_create` to plan before complex coding.\n"
+        "Behavior Rules:\n"
+        "- Do NOT list directories or read files proactively unless asked.\n"
+        "- If the user says 'Hello', just reply 'Hello'.\n"
+        "- Use `delegate_research` for large-scale information gathering.\n"
+        "Domain Knowledge:\n"
+        "- You can use `list_available_skills` to see available Schaeffler internal guidelines.\n"
+        "- Use `load_skill` to read a specific guideline when the user asks you to follow a certain process.\n"
+        "ERROR HANDLING:\n"
+        "- You MUST read the exact output of your tool calls. If a tool returns a string starting with 'Error:', "
+        "you MUST NOT pretend it succeeded. You must inform the user about the error and try to fix it or stop.\n"
     )
 
-    messages = [HumanMessage(content=system_message)] + state["messages"]
-    response = coder_llm.invoke(messages)
+    # Prepend System Message
+    messages_for_llm = [HumanMessage(content=system_message)] + compressed_messages
 
+    response = await coder_llm.ainvoke(messages_for_llm)
     return {"messages": [response], "sender": "coder"}
 
-def reviewer_node(state: AgentState):
-    """
-    The Compliance Reviewer agent. Checks the Coder's proposed tool calls.
-    """
+async def reviewer_node(state: AgentState):
+    """Compliance Reviewer Agent"""
+    print("🛡️ [Reviewer] Analyzing safety...")
+
     last_message = state["messages"][-1]
 
-    # If no tool calls, nothing to review (or maybe review the text response?)
-    # For now, we focus on tool calls interception.
+    # Safety Check: If no tool calls, pass through.
     if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
-        # If Coder didn't call a tool, we might want to just pass it through or
-        # checking if it's a final answer.
-        # But per requirements: "Reviewer analyzes the diff."
-        # If it's just text, we assume it's safe or irrelevant for the reviewer?
-        # Let's say we approve text-only responses automatically for now.
-        return {"messages": [AIMessage(content="APPROVE_TEXT")], "sender": "reviewer"}
+        return {"sender": "reviewer"}
 
     tool_calls = last_message.tool_calls
-
     llm = get_llm()
 
-    # Create a prompt for the reviewer
-    # We serialize the tool calls to text for the reviewer to analyze
-    tool_calls_text = str(tool_calls)
-
-    system_message = (
-        "You are a Compliance Reviewer at Schaeffler. "
-        "Your job is to analyze the proposed tool execution for security risks.\n"
+    # Review Prompt
+    review_prompt = (
+        "You are a Schaeffler Security Auditor. Analyze these tool calls:\n"
+        f"{str(tool_calls)}\n"
         "Rules:\n"
-        "1. No hardcoded secrets (API keys, passwords).\n"
-        "2. No PII (Personal Identifiable Information).\n"
-        "3. No destructive commands (rm -rf, etc.).\n"
-        "4. No telemetry or external data logging.\n"
-        "\n"
-        "Analyze the following tool calls:\n"
-        f"{tool_calls_text}\n"
-        "\n"
-        "Response Format:\n"
-        "If safe: Respond with exactly 'APPROVE'.\n"
-        "If unsafe: Respond with 'REJECT: <reason>'."
+        "- REJECT if: 'rm -rf', sensitive paths (/etc), hardcoded passwords.\n"
+        "- REJECT if: logic seems destructive without cause.\n"
+        "- OTHERWISE: respond 'APPROVE'."
     )
 
-    response = llm.invoke([HumanMessage(content=system_message)])
-    content = response.content.strip()
+    response = await llm.ainvoke([HumanMessage(content=review_prompt)])
+    decision = response.content.strip().upper()
 
-    # We don't add the reviewer's internal thought process to the main history
-    # to avoid confusing the Coder, unless it's a rejection.
-    # Actually, we should probably output a special message indicating status.
-
-    if "APPROVE" in content.upper():
-        # Proceed to tools
-        return {"sender": "reviewer"} # No new message added to history, just signal
+    if "APPROVE" in decision:
+        # Implicit approval - pass control to tools
+        return {"sender": "reviewer"}
     else:
-        # Reject: Add a tool message simulating a failure or just a HumanMessage
-        # telling the Coder to fix it.
-        # Ideally we should construct a ToolMessage indicating failure, but
-        # since the tool hasn't run, we can just feed back the rejection as a user/system message.
-        rejection_msg = HumanMessage(
-            content=f"Compliance Check Failed: {content}. Please fix your request."
+        # Rejection - overwrite the flow with an error message
+        rejection_msg = ToolMessage(
+            tool_call_id=tool_calls[0]['id'], # Blame the first tool
+            content=f"⛔ SECURITY BLOCK: {decision}",
+            name="security_auditor"
         )
-        return {"messages": [rejection_msg], "sender": "reviewer"}
+        # We append a ToolMessage that acts as a 'fake' result saying it failed.
+        # This forces the Coder to see the error and retry.
+        return {"messages": [rejection_msg], "sender": "reviewer_rejected"}
 
-# --- Tool Node ---
-tool_node = ToolNode(TOOLS)
+async def tool_execution_node(state: AgentState):
+    """Dynamic Tool Executor"""
+    print("🛠️ [Tools] Executing...")
 
-# --- Routing ---
-
-def router(state: AgentState) -> Literal["reviewer", "__end__", "continue"]:
     messages = state["messages"]
     last_message = messages[-1]
 
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+    # Get tools map
+    tool_map = {t.name: t for t in get_all_tools()}
+    results = []
+
+    for tool_call in last_message.tool_calls:
+        try:
+            tool = tool_map.get(tool_call["name"])
+            if tool:
+                # Execute
+                output = await tool.ainvoke(tool_call["args"])
+            else:
+                output = f"Error: Tool {tool_call['name']} not found."
+        except Exception as e:
+            output = f"Tool Execution Error: {str(e)}"
+
+        results.append(ToolMessage(
+            tool_call_id=tool_call["id"],
+            content=str(output),
+            name=tool_call["name"]
+        ))
+
+    return {"messages": results, "sender": "tools"}
+
+# --- Routers ---
+
+def router_coder(state: AgentState):
+    msg = state["messages"][-1]
+    if msg.tool_calls:
         return "reviewer"
-    return "__end__" # Or continue conversation?
+    return "__end__"
 
-def reviewer_router(state: AgentState) -> Literal["tools", "coder"]:
-    messages = state["messages"]
-    last_message = messages[-1]
+def router_reviewer(state: AgentState):
+    # If the Reviewer injected a rejection ToolMessage, go back to Coder to fix it.
+    if state["sender"] == "reviewer_rejected":
+        return "coder"
+    # Otherwise (sender="reviewer"), it means Approved -> Execute Tools.
+    return "tools"
 
-    # If the last message is from the reviewer (rejection), it's a HumanMessage (simulated).
-    # Wait, in reviewer_node, if REJECT, we added a HumanMessage.
-    # If APPROVE, we added NOTHING (or a placeholder).
+# --- Graph ---
 
-    # Logic:
-    # If last message is HumanMessage (Rejection) -> back to Coder.
-    # If last message is AIMessage (Coder's original tool call) -> means we approved and didn't add new msg.
-    # Wait, if we return {"sender": "reviewer"}, state["messages"] is unchanged?
-    # No, state update usually merges.
+def create_graph():
+    workflow = StateGraph(AgentState)
 
-    sender = state.get("sender", "")
+    workflow.add_node("coder", coder_node)
+    workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("tools", tool_execution_node)
 
-    if sender == "reviewer":
-        # If reviewer sent a message, it must be a rejection (HumanMessage)
-        # Check content
-        if isinstance(last_message, HumanMessage) and "Compliance Check Failed" in last_message.content:
-            return "coder"
+    workflow.set_entry_point("coder")
 
-        # If it was "APPROVE_TEXT" (AIMessage), we end?
-        if isinstance(last_message, AIMessage) and "APPROVE_TEXT" in last_message.content:
-            return "coder" # Or end? Coder might want to continue.
+    workflow.add_conditional_edges("coder", router_coder, {"reviewer": "reviewer", "__end__": END})
+    workflow.add_conditional_edges("reviewer", router_reviewer, {"tools": "tools", "coder": "coder"})
+    workflow.add_edge("tools", "coder")
 
-    # If sender was NOT reviewer (meaning we didn't add messages in approve path),
-    # or if we are just checking the state:
-    # Actually, if Reviewer approves, we want to go to Tools.
-    # But how do we distinguish "Reviewer Approved" vs "Reviewer Rejected" if we didn't add a message?
-    # We can use a separate key in state, or check if the last message is still the tool call.
+    # Persistence
+    memory = MemorySaver()
 
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
-        # It's the original tool call, meaning it wasn't buried by a rejection message.
-        return "tools"
+    # ⚠️ CRITICAL: The interrupt happens BEFORE the 'tools' node runs.
+    # This gives the Human user a chance to see "Reviewer Approved" and still say NO.
+    return workflow.compile(checkpointer=memory, interrupt_before=["tools"])
 
-    return "coder"
-
-# --- Graph Construction ---
-
-workflow = StateGraph(AgentState)
-
-workflow.add_node("coder", coder_node)
-workflow.add_node("reviewer", reviewer_node)
-workflow.add_node("tools", tool_node)
-
-workflow.set_entry_point("coder")
-
-workflow.add_conditional_edges(
-    "coder",
-    router,
-    {
-        "reviewer": "reviewer",
-        "__end__": END,
-        "continue": "coder"
-    }
-)
-
-workflow.add_conditional_edges(
-    "reviewer",
-    reviewer_router,
-    {
-        "tools": "tools",
-        "coder": "coder"
-    }
-)
-
-workflow.add_edge("tools", "coder")
-
-# Initialize memory for persistence
-memory = MemorySaver()
-
-# Compile with interrupt and checkpointer
-app_graph = workflow.compile(checkpointer=memory, interrupt_before=["tools"])
+app_graph = create_graph()
