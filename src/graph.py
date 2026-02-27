@@ -105,10 +105,21 @@ async def tool_execution_node(state: AgentState):
 # --- Routers ---
 
 def router_coder(state: AgentState):
-    msg = state["messages"][-1]
-    if msg.tool_calls:
+    """
+    This router is now safe. It first checks if the last message is from the AI
+    before attempting to access tool_calls.
+    """
+    last_message = state["messages"][-1]
+
+    # --- CRITICAL SAFETY CHECK ---
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        # If the AI wants to use tools, proceed to the tool execution node
+        # (Note: We removed the reviewer, so it goes straight to tools)
         return "tools"
-    return "__end__"
+    else:
+        # If it's a regular text response from the AI, or any other message type,
+        # the conversation turn is over.
+        return "__end__"
 
 # --- Graph ---
 
