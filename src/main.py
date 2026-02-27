@@ -331,20 +331,38 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
 
             # Attach input listener while streaming
             with inp.raw_mode(), inp.attach(keys_ready):
-                async for event in app_graph.astream(inputs, config=config, stream_mode="messages"):
-                    chunk, metadata = event
-                    if isinstance(chunk, AIMessageChunk):
-                        if accumulated_msg is None:
-                            accumulated_msg = chunk
-                        else:
-                            accumulated_msg += chunk
+                async for event in app_graph.astream(inputs, config=config, stream_mode=["messages", "updates"]):
+                    stream_type, data = event
 
-                        parsed = parse_agent_message(accumulated_msg)
-                        LAST_MSG_DATA["content"] = parsed["content"]
-                        LAST_MSG_DATA["thoughts"] = parsed["thoughts"]
-                        LAST_MSG_DATA["tools"] = parsed.get("tools", [])
+                    # --- 模式 1：尝试抓取动态打字的碎片 (如果支持流式) ---
+                    if stream_type == "messages":
+                        chunk, metadata = data
+                        if isinstance(chunk, (AIMessageChunk, AIMessage)):
+                            if accumulated_msg is None:
+                                accumulated_msg = chunk
+                            else:
+                                accumulated_msg += chunk
 
-                        live.update(get_live_renderable())
+                            parsed = parse_agent_message(accumulated_msg)
+                            LAST_MSG_DATA["content"] = parsed["content"]
+                            LAST_MSG_DATA["thoughts"] = parsed["thoughts"]
+                            LAST_MSG_DATA["tools"] = parsed.get("tools", [])
+
+                            live.update(get_live_renderable())
+
+                    # --- 模式 2：兜底安全网 (无论是否流式，节点执行完必触发) ---
+                    elif stream_type == "updates":
+                        for node, values in data.items():
+                            if "messages" in values:
+                                for msg in values["messages"]:
+                                    if isinstance(msg, AIMessage):
+                                        # 使用完整的消息覆盖状态，确保 100% 拿到结果
+                                        parsed = parse_agent_message(msg)
+                                        LAST_MSG_DATA["content"] = parsed["content"]
+                                        LAST_MSG_DATA["thoughts"] = parsed["thoughts"]
+                                        LAST_MSG_DATA["tools"] = parsed.get("tools", [])
+
+                                        live.update(get_live_renderable())
 
     except KeyboardInterrupt:
         console.print("\n[bold red]🛑 Generation interrupted by user.[/bold red]")
