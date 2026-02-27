@@ -1,2 +1,3 @@
 "# Environment variables\n.env\n\n# Python cache\n__pycache__/\n*.pyc\n\n# Virtual environment\nvenv/\n.venv/\nenv/\n\n# IDE and editor files\n.vscode/\n.idea/
 .claude/" 
+.env
