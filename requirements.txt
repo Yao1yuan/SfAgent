@@ -1,0 +1,34 @@
+# ----------------------------------------------------
+# Schaeffler Code CLI - requirements.txt
+#
+# This file lists only the TOP-LEVEL direct dependencies.
+# Pip will automatically handle installing their sub-dependencies.
+# ----------------------------------------------------
+
+# --- Core Agent & LLM Framework ---
+# For building the agentic workflow and state machines
+langgraph==0.0.60
+# For connecting to Azure OpenAI
+langchain-openai==0.1.7
+
+# --- CLI User Interface & Interactivity ---
+# For building the command-line interface (e.g., 'chat', 'ping')
+typer[all]==0.12.3
+# For beautiful terminal outputs (colors, panels, markdown)
+rich==13.7.1
+# For the advanced auto-completion prompt (like Claude Code CLI)
+prompt_toolkit==3.0.43
+
+# --- Advanced Code Analysis ---
+# For parsing code into Abstract Syntax Trees (AST)
+# Note: Requires a C compiler. On Windows, install Microsoft C++ Build Tools.
+tree-sitter==0.21.3
+tree-sitter-languages==1.10.2
+
+# --- Extensibility & Configuration ---
+# For Model Context Protocol (MCP) support
+mcp==0.0.5
+# For loading settings from .env files securely
+pydantic-settings==2.3.1
+# Core library for .env file handling
+python-dotenv==1.0.1
