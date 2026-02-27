@@ -72,46 +72,6 @@ async def coder_node(state: AgentState):
     response = await coder_llm.ainvoke(messages_for_llm)
     return {"messages": [response], "sender": "coder"}
 
-async def reviewer_node(state: AgentState):
-    """Compliance Reviewer Agent"""
-    print("🛡️ [Reviewer] Analyzing safety...")
-
-    last_message = state["messages"][-1]
-
-    # Safety Check: If no tool calls, pass through.
-    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
-        return {"sender": "reviewer"}
-
-    tool_calls = last_message.tool_calls
-    llm = get_llm()
-
-    # Review Prompt
-    review_prompt = (
-        "You are a Schaeffler Security Auditor. Analyze these tool calls:\n"
-        f"{str(tool_calls)}\n"
-        "Rules:\n"
-        "- REJECT if: 'rm -rf', sensitive paths (/etc), hardcoded passwords.\n"
-        "- REJECT if: logic seems destructive without cause.\n"
-        "- OTHERWISE: respond 'APPROVE'."
-    )
-
-    response = await llm.ainvoke([HumanMessage(content=review_prompt)])
-    decision = response.content.strip().upper()
-
-    if "APPROVE" in decision:
-        # Implicit approval - pass control to tools
-        return {"sender": "reviewer"}
-    else:
-        # Rejection - overwrite the flow with an error message
-        rejection_msg = ToolMessage(
-            tool_call_id=tool_calls[0]['id'], # Blame the first tool
-            content=f"⛔ SECURITY BLOCK: {decision}",
-            name="security_auditor"
-        )
-        # We append a ToolMessage that acts as a 'fake' result saying it failed.
-        # This forces the Coder to see the error and retry.
-        return {"messages": [rejection_msg], "sender": "reviewer_rejected"}
-
 async def tool_execution_node(state: AgentState):
     """Dynamic Tool Executor"""
     print("🛠️ [Tools] Executing...")
@@ -147,15 +107,8 @@ async def tool_execution_node(state: AgentState):
 def router_coder(state: AgentState):
     msg = state["messages"][-1]
     if msg.tool_calls:
-        return "reviewer"
+        return "tools"
     return "__end__"
-
-def router_reviewer(state: AgentState):
-    # If the Reviewer injected a rejection ToolMessage, go back to Coder to fix it.
-    if state["sender"] == "reviewer_rejected":
-        return "coder"
-    # Otherwise (sender="reviewer"), it means Approved -> Execute Tools.
-    return "tools"
 
 # --- Graph ---
 
@@ -163,20 +116,18 @@ def create_graph():
     workflow = StateGraph(AgentState)
 
     workflow.add_node("coder", coder_node)
-    workflow.add_node("reviewer", reviewer_node)
     workflow.add_node("tools", tool_execution_node)
 
     workflow.set_entry_point("coder")
 
-    workflow.add_conditional_edges("coder", router_coder, {"reviewer": "reviewer", "__end__": END})
-    workflow.add_conditional_edges("reviewer", router_reviewer, {"tools": "tools", "coder": "coder"})
+    workflow.add_conditional_edges("coder", router_coder, {"tools": "tools", "__end__": END})
     workflow.add_edge("tools", "coder")
 
     # Persistence
     memory = MemorySaver()
 
     # ⚠️ CRITICAL: The interrupt happens BEFORE the 'tools' node runs.
-    # This gives the Human user a chance to see "Reviewer Approved" and still say NO.
+    # This gives the Human user a chance to see the plan and still say NO.
     return workflow.compile(checkpointer=memory, interrupt_before=["tools"])
 
 app_graph = create_graph()

@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # --- 引入 prompt_toolkit 核心组件 ---
@@ -207,16 +207,25 @@ async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, A
                             if last_msg.tool_calls:
                                 console.print(f"[bold cyan][Coder][/bold cyan] Proposed tools: {[tc['name'] for tc in last_msg.tool_calls]}")
 
-                    elif sender == "reviewer":
-                        if isinstance(last_msg, HumanMessage):
-                            console.print(f"[bold red][Reviewer][/bold red] {last_msg.content}")
-
                     elif sender == "tools":
                          if isinstance(last_msg, ToolMessage):
-                             content_preview = str(last_msg.content)
-                             if len(content_preview) > 200:
-                                 content_preview = content_preview[:200] + "..."
-                             console.print(f"[bold magenta][Tool][/bold magenta] Result: {content_preview}")
+                            full_content = str(last_msg.content)
+                            if len(full_content) <= 300:
+                                console.print(f"[bold magenta][Tool][/bold magenta] Result: {full_content}")
+                            else:
+                                preview = full_content[:300] + "\n... [Output Truncated] ..."
+                                console.print(f"[bold magenta][Tool][/bold magenta] Result: {preview}")
+
+                                user_choice = Prompt.ask(
+                                    "[dim]Press 'v' to view full output, or ENTER to continue[/dim]",
+                                    choices=["v"],
+                                    default="",
+                                    show_choices=False,
+                                    show_default=False
+                                )
+                                if user_choice.lower() == 'v':
+                                    with console.pager():
+                                        console.print(full_content)
 
         # Check if paused (HITL)
         snapshot = app_graph.get_state(config)
