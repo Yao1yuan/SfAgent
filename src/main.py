@@ -5,16 +5,26 @@ import os
 import asyncio
 from typing import Optional, Dict, Any
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.prompt import Confirm, Prompt
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from rich.live import Live
+from rich.layout import Layout
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, AIMessageChunk
+import re
 
 # --- 引入 prompt_toolkit 核心组件 ---
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.input import create_input
+from prompt_toolkit.keys import Keys
+
+# --- Global State ---
+VIEW_STATE = {"detailed": False}
+LAST_MSG_DATA = {"content": "", "thoughts": "", "tools": []}
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +42,109 @@ COMMANDS = {
     "/clear": "Clear the conversation history (Not implemented)",
     "/exit": "Quit the SF CLI"
 }
+
+def parse_agent_message(msg: AIMessage) -> Dict[str, Any]:
+    """
+    Strict Parser for reasoning models (DeepSeek-R1, OpenAI o1).
+    Extracts 'thoughts' (reasoning_content or <think> tags) and 'content'.
+    """
+    result = {"content": "", "thoughts": "", "tools": []}
+
+    # 1. Try to get reasoning from additional_kwargs (OpenAI o1 / DeepSeek via some providers)
+    if "reasoning_content" in msg.additional_kwargs:
+        result["thoughts"] = msg.additional_kwargs["reasoning_content"]
+
+    # 2. Parse content
+    raw_content = msg.content
+
+    if isinstance(raw_content, list):
+        # Handle list of dicts (Multimodal/Anthropic style)
+        text_parts = []
+        thinking_parts = []
+        for part in raw_content:
+            if isinstance(part, dict):
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                elif part.get("type") == "thinking": # Claude 3.7+ potentially
+                    thinking_parts.append(part.get("thinking", ""))
+
+        full_text = "".join(text_parts)
+        if thinking_parts:
+            result["thoughts"] = "\n".join(thinking_parts)
+    else:
+        full_text = str(raw_content)
+
+    # 3. Extract <think> tags if present in text (DeepSeek-R1 raw output)
+    think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+    think_match = think_pattern.search(full_text)
+
+    if think_match:
+        result["thoughts"] = think_match.group(1).strip()
+        # Remove the <think> block from content
+        full_text = think_pattern.sub("", full_text).strip()
+
+    # Handle unclosed <think> tag (during streaming)
+    if "<think>" in full_text and "</think>" not in full_text:
+        parts = full_text.split("<think>", 1)
+        # Everything after <think> is treated as thoughts until closed
+        result["thoughts"] = parts[1]
+        # Content is what came before
+        full_text = parts[0]
+    elif "</think>" in full_text and "<think>" not in full_text:
+         # Closing tag appeared, but opening was likely in previous chunk (if streaming raw)
+         pass
+
+    result["content"] = full_text.strip()
+
+    # 4. Extract Tools
+    if msg.tool_calls:
+        result["tools"] = msg.tool_calls
+
+    return result
+
+def get_live_renderable() -> Group:
+    """Renderable for the Rich Live display during generation"""
+    items = []
+
+    # Default state if nothing has arrived yet
+    if not LAST_MSG_DATA["thoughts"] and not LAST_MSG_DATA["content"]:
+        items.append("[dim]Waiting for response...[/dim]")
+
+    if LAST_MSG_DATA["thoughts"]:
+        if VIEW_STATE["detailed"]:
+             items.append(Panel(Markdown(LAST_MSG_DATA["thoughts"]), title="[bold blue]Thinking Process[/bold blue]", border_style="blue dim"))
+        else:
+             items.append("[dim]🤖 Coder is thinking... (Ctrl+O to expand)[/dim]")
+
+    if LAST_MSG_DATA["content"]:
+        items.append(Markdown(LAST_MSG_DATA["content"]))
+
+    return Group(*items)
+
+def get_dynamic_prompt():
+    """
+    Dynamic prompt that renders the LAST AI message + the input prompt.
+    This allows the previous message to be collapsible even when waiting for input.
+    """
+    parts = []
+
+    import html
+
+    # Thoughts
+    if LAST_MSG_DATA["thoughts"]:
+        if VIEW_STATE["detailed"]:
+            parts.append(f"<style fg='blue'><b>▾ [Thinking Process]</b></style>\n<style fg='#888888'>{html.escape(LAST_MSG_DATA['thoughts'])}</style>")
+        else:
+            parts.append(f"<style fg='#888888'>▸ [Thinking Process] (Ctrl+O to expand)</style>")
+
+    # Content
+    if LAST_MSG_DATA["content"]:
+        content_safe = html.escape(LAST_MSG_DATA["content"])
+        parts.append(f"\n<b>[Coder]</b> {content_safe}")
+
+    parts.append("\n<ansigreen><b>You:</b></ansigreen> ")
+
+    return HTML("\n".join(parts))
 
 class SlashCommandCompleter(Completer):
     def get_completions(self, document, complete_event):
@@ -88,7 +201,7 @@ def chat():
 
 async def run_chat_loop():
     console.print(Panel.fit("[bold blue]SF AI Developer CLI[/bold blue]\n[dim]Secure. Compliant. Autonomous.[/dim]", border_style="blue"))
-    console.print("[dim]Hint: Type `/help` to see available local commands.[/dim]")
+    console.print("[dim]Hint: Type `/help` to see available local commands. Ctrl+O to toggle thinking.[/dim]")
 
     # Initialize MCP
     console.print("[dim]Initializing MCP tools...[/dim]")
@@ -103,17 +216,29 @@ async def run_chat_loop():
 
     console.print(f"[dim]Session ID: {thread_id}[/dim]")
 
+    # Define Key Bindings for Global State Control
+    kb = KeyBindings()
+
+    @kb.add('c-o')
+    def _(event):
+        """Toggle detailed view"""
+        VIEW_STATE["detailed"] = not VIEW_STATE["detailed"]
+        event.app.invalidate()
+
     # 👇 [核心修改] 初始化带有自动补全功能的会话 (Session)
     session = PromptSession(
         completer=SlashCommandCompleter(),
-        complete_while_typing=True
+        complete_while_typing=True,
+        key_bindings=kb,
+        refresh_interval=0.5
     )
 
     try:
         while True:
             # 👇 [核心修改] 使用 prompt_toolkit 异步获取输入，支持补全和高亮
+            # 这里的 prompt 是动态的，根据 LAST_MSG_DATA 和 VIEW_STATE 渲染
             try:
-                user_input = await session.prompt_async(HTML('\n<ansigreen><b>You:</b></ansigreen> '))
+                user_input = await session.prompt_async(get_dynamic_prompt)
             except (KeyboardInterrupt, EOFError):
                 console.print("\n[yellow]Session terminated by user.[/yellow]")
                 break
@@ -132,6 +257,7 @@ async def run_chat_loop():
   /load <skill_name>   Load a skill into the current context
   /exit                Quit the CLI
   /clear               (Not implemented) Clear history
+  Ctrl+O               Toggle Thinking Process View
 """
                 console.print(Panel(help_text, title="SF CLI Help", border_style="green"))
                 continue
@@ -179,87 +305,83 @@ async def run_chat_loop():
 
 async def _run_interaction(inputs: Optional[Dict[str, Any]], config: Dict[str, Any]):
     """
-    [REFACTORED] Run the graph loop with a "collect then render" strategy
-    to support interactive expandable outputs.
+    [REFACTORED] Run the graph loop with True Streaming and Background Key Listening.
     """
+    global LAST_MSG_DATA
+
+    # Only reset if starting a new turn (inputs provided)
+    if inputs is not None:
+        LAST_MSG_DATA = {"content": "", "thoughts": "", "tools": []}
+
+    accumulated_msg = None
+
+    # Create input handler for background key listening
+    inp = create_input()
+
     try:
-        # --- [核心修改] Step 1: Silently collect all new messages from the stream ---
-        new_messages = []
-        async for event in app_graph.astream(inputs, config=config, stream_mode="updates"):
-            for node, values in event.items():
-                if "messages" in values:
-                    # Just collect, don't print yet!
-                    new_messages.extend(values["messages"])
+        # Use transient Live display so it disappears after generation
+        # handing control over to get_dynamic_prompt
+        with Live(get_live_renderable(), console=console, refresh_per_second=10, transient=True) as live:
 
-        # --- [核心修改] Step 2: Interactively render the collected messages ---
-        for msg in new_messages:
-            if isinstance(msg, AIMessage):  # It's from the Coder
-                # Render thoughts (collapsible)
-                if msg.content:
-                    full_thoughts = "".join(part.get('text', '') for part in msg.content if isinstance(part, dict) and part.get('type') == 'text') if isinstance(msg.content, list) else str(msg.content)
-                    if full_thoughts:
-                        if len(full_thoughts) <= 150:
-                            console.print(f"[bold blue][Coder][/bold blue] {full_thoughts}")
+            def keys_ready():
+                for k in inp.read_keys():
+                    if k.key == Keys.ControlO:
+                        VIEW_STATE["detailed"] = not VIEW_STATE["detailed"]
+                        live.update(get_live_renderable())
+
+            # Attach input listener while streaming
+            with inp.raw_mode(), inp.attach(keys_ready):
+                async for event in app_graph.astream(inputs, config=config, stream_mode="messages"):
+                    chunk, metadata = event
+                    if isinstance(chunk, AIMessageChunk):
+                        if accumulated_msg is None:
+                            accumulated_msg = chunk
                         else:
-                            preview = full_thoughts[:100].replace('\n', ' ') + "..."
-                            console.print(f"[bold blue][Coder][/bold blue] [dim]{preview}[/dim]")
-                            user_choice = Prompt.ask("[dim]Press 't' to read full thoughts, or ENTER to continue[/dim]", choices=["t"], default="", show_choices=False, show_default=False)
-                            if user_choice.lower() == 't':
-                                with console.pager():
-                                    console.print(Markdown(full_thoughts))
-                # Render proposed tools (always visible)
-                if msg.tool_calls:
-                    console.print(f"[bold cyan][Coder][/bold cyan] Proposed tools: {[tc['name'] for tc in msg.tool_calls]}")
+                            accumulated_msg += chunk
 
-            elif isinstance(msg, ToolMessage):  # It's from a Tool
-                # Render tool results (collapsible)
-                full_content = str(msg.content)
-                if len(full_content) <= 300:
-                    console.print(f"[bold magenta][Tool][/bold magenta] Result: {full_content}")
-                else:
-                    preview = full_content[:300].replace('\n', ' ') + "\n... [Output Truncated] ..."
-                    console.print(f"[bold magenta][Tool][/bold magenta] Result: [dim]{preview}[/dim]")
-                    user_choice = Prompt.ask("[dim]Press 'v' to view full output, or ENTER to continue[/dim]", choices=["v"], default="", show_choices=False, show_default=False)
-                    if user_choice.lower() == 'v':
-                        with console.pager():
-                            console.print(full_content)
+                        parsed = parse_agent_message(accumulated_msg)
+                        LAST_MSG_DATA["content"] = parsed["content"]
+                        LAST_MSG_DATA["thoughts"] = parsed["thoughts"]
+                        LAST_MSG_DATA["tools"] = parsed.get("tools", [])
 
-
-        # --- Step 3: Handle the Human-in-the-Loop approval (this part was already correct) ---
-        snapshot = app_graph.get_state(config)
-        if snapshot.next and "tools" in snapshot.next:
-            last_msg = snapshot.values["messages"][-1]
-            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-                tool_calls = last_msg.tool_calls
-
-                console.print("\n[bold yellow]⚠️  Pending Tool Execution (Paused for Approval):[/bold yellow]")
-                for tc in tool_calls:
-                    console.print(f"  [bold]{tc['name']}[/bold]: {tc['args']}")
-
-                # Update the approval prompt to include 'always'
-                user_approval = Prompt.ask("Approve execution? [y/n/always]", choices=["y", "n", "always"], default="y")
-
-                if user_approval.lower() in ['y', 'yes']:
-                    console.print("[green]Approving... Resuming execution.[/green]")
-                    await _run_interaction(None, config)
-                elif user_approval.lower() in ['a', 'always']:
-                    # Assuming you have a global or class-level AUTO_APPROVE flag
-                    # This part needs to be connected to the new `/auto` feature state
-                    console.print("[green]Always-Approve Mode Enabled. Resuming...[/green]")
-                    # Set the flag here
-                    # e.g., set_auto_approve(True)
-                    await _run_interaction(None, config)
-                else:
-                    console.print("[red]Rejected.[/red]")
-                    rejection_messages = [ToolMessage(tool_call_id=tc['id'], content="Error: User rejected execution.", name=tc['name']) for tc in tool_calls]
-                    app_graph.update_state(config, {"messages": rejection_messages}, as_node="tools")
-                    await _run_interaction(None, config)
+                        live.update(get_live_renderable())
 
     except KeyboardInterrupt:
         console.print("\n[bold red]🛑 Generation interrupted by user.[/bold red]")
         return
     except Exception as e:
         console.print(f"[bold red]Interaction Error:[/bold red] {e}")
+        return
+
+    # --- Step 3: Handle the Human-in-the-Loop approval ---
+    snapshot = app_graph.get_state(config)
+    if snapshot.next and "tools" in snapshot.next:
+        last_msg = snapshot.values["messages"][-1]
+
+        # Solidify current state before prompt (since Live is transient)
+        # We print it so the user has context for what they are approving
+        console.print(get_live_renderable())
+
+        if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+            tool_calls = last_msg.tool_calls
+
+            console.print("\n[bold yellow]⚠️  Pending Tool Execution (Paused for Approval):[/bold yellow]")
+            for tc in tool_calls:
+                console.print(f"  [bold]{tc['name']}[/bold]: {tc['args']}")
+
+            user_approval = Prompt.ask("Approve execution? [y/n/always]", choices=["y", "n", "always"], default="y")
+
+            if user_approval.lower() in ['y', 'yes']:
+                console.print("[green]Approving... Resuming execution.[/green]")
+                await _run_interaction(None, config)
+            elif user_approval.lower() in ['a', 'always']:
+                console.print("[green]Always-Approve Mode Enabled. Resuming...[/green]")
+                await _run_interaction(None, config)
+            else:
+                console.print("[red]Rejected.[/red]")
+                rejection_messages = [ToolMessage(tool_call_id=tc['id'], content="Error: User rejected execution.", name=tc['name']) for tc in tool_calls]
+                app_graph.update_state(config, {"messages": rejection_messages}, as_node="tools")
+                await _run_interaction(None, config)
 
 @app.command()
 def ping():
